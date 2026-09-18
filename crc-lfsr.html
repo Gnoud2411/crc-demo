@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mạch XOR xoay vòng — mô phỏng tính CRC</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --board:#EFF3EC; --panel:#FFFFFF; --sunk:#E5EBE2;
+  --ink:#16281F; --soft:#5E7266; --rule:#D0DACE;
+  --copper:#A0602A; --hot:#D98E12; --hot-soft:#F6E2B8;
+  --live:#0F6B52; --warn:#B33A2B;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --board:#0A1F19; --panel:#102B23; --sunk:#0C241D;
+    --ink:#DDEAE3; --soft:#87A497; --rule:#1E4436;
+    --copper:#C5854A; --hot:#F0B03A; --hot-soft:#3A2D12;
+    --live:#3FBF97; --warn:#F08A7A;
+  }
+}
+:root[data-theme="dark"]{
+  --board:#0A1F19; --panel:#102B23; --sunk:#0C241D;
+  --ink:#DDEAE3; --soft:#87A497; --rule:#1E4436;
+  --copper:#C5854A; --hot:#F0B03A; --hot-soft:#3A2D12;
+  --live:#3FBF97; --warn:#F08A7A;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--board); color:var(--ink);
+  font-family:var(--sans); font-size:15px; line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:900px; margin:0 auto; padding:26px 18px 40px}
+h1{font-size:23px; font-weight:600; letter-spacing:-.015em; margin:0 0 4px; line-height:1.2}
+.sub{color:var(--soft); margin:0 0 22px; max-width:62ch}
+.panel{background:var(--panel); border:1px solid var(--rule); border-radius:10px; padding:16px 16px 14px; margin-bottom:14px}
+.setup{display:flex; flex-wrap:wrap; gap:14px; align-items:flex-end}
+.field{flex:1 1 150px; min-width:130px}
+.field span{display:block; font-size:13px; color:var(--soft); margin-bottom:5px}
+input[type=text]{
+  width:100%; font-family:var(--mono); font-size:15px; letter-spacing:.06em;
+  padding:8px 10px; border-radius:7px; border:1px solid var(--rule);
+  background:var(--sunk); color:var(--ink);
+}
+input[type=text]:focus-visible{outline:2px solid var(--copper); outline-offset:1px}
+.err{color:var(--warn); font-size:13px; margin:8px 0 0; min-height:0}
+
+.ribbon{display:flex; flex-wrap:wrap; gap:3px; font-family:var(--mono); font-size:15px; margin-top:4px}
+.bit{
+  width:26px; height:30px; display:grid; place-items:center; border-radius:5px;
+  background:var(--sunk); color:var(--soft); border:1px solid transparent;
+}
+.bit.pad{opacity:.55; border-style:dashed; border-color:var(--rule)}
+.bit.done{background:transparent; color:var(--soft); opacity:.4}
+.bit.now{background:var(--hot); color:#1C1403; border-color:var(--hot); font-weight:600}
+.legend{font-size:13px; color:var(--soft); margin-top:9px}
+
+.scope{overflow-x:auto; padding:2px 0 6px}
+svg{display:block; min-width:100%}
+.wire{stroke:var(--copper); stroke-width:1.8; fill:none}
+.fb{stroke:var(--copper); stroke-width:1.8; fill:none; transition:stroke .18s, stroke-width .18s}
+.fb.on{stroke:var(--hot); stroke-width:3}
+.gate{fill:var(--panel); stroke:var(--copper); stroke-width:1.8; transition:fill .18s, stroke .18s}
+.gate.on{stroke:var(--hot); fill:var(--hot-soft)}
+.gsym{fill:var(--copper); font-family:var(--mono); font-size:17px; text-anchor:middle; transition:fill .18s}
+.gsym.on{fill:var(--hot)}
+.cell{fill:var(--sunk); stroke:var(--rule); stroke-width:1.5; transition:fill .2s, stroke .2s}
+.cell.one{fill:var(--live); stroke:var(--live)}
+.cval{font-family:var(--mono); font-size:19px; font-weight:600; text-anchor:middle; fill:var(--ink); transition:fill .2s}
+.cval.one{fill:var(--panel)}
+.clab{font-family:var(--mono); font-size:11px; text-anchor:middle; fill:var(--soft)}
+.tag{font-family:var(--sans); font-size:12px; fill:var(--soft)}
+.tag.on{fill:var(--hot)}
+
+.readout{display:flex; flex-wrap:wrap; gap:10px 26px; align-items:baseline; margin-top:2px}
+.ro b{font-family:var(--mono); font-size:19px; font-weight:600; letter-spacing:.08em}
+.ro span{display:block; font-size:12px; color:var(--soft)}
+.ro.fbon b{color:var(--hot)}
+.note{margin:12px 0 0; padding-top:12px; border-top:1px solid var(--rule); color:var(--soft); font-size:14px}
+.note strong{color:var(--ink); font-weight:500}
+
+.controls{display:flex; flex-wrap:wrap; gap:8px}
+button{
+  font:inherit; font-size:14px; padding:9px 15px; border-radius:7px; cursor:pointer;
+  border:1px solid var(--rule); background:var(--panel); color:var(--ink);
+}
+button:hover:not(:disabled){border-color:var(--copper)}
+button:focus-visible{outline:2px solid var(--copper); outline-offset:2px}
+button:disabled{opacity:.42; cursor:default}
+button.key{background:var(--copper); border-color:var(--copper); color:#FFF8F0}
+
+.log{max-height:300px; overflow:auto; margin-top:2px}
+table{border-collapse:collapse; width:100%; font-family:var(--mono); font-size:14px}
+th{
+  position:sticky; top:0; background:var(--panel); text-align:right; font-weight:500;
+  font-family:var(--sans); font-size:12px; color:var(--soft);
+  padding:6px 10px; border-bottom:1px solid var(--rule); white-space:nowrap;
+}
+td{padding:5px 10px; text-align:right; border-bottom:1px solid var(--rule); white-space:nowrap}
+tbody tr:last-child td{background:var(--sunk)}
+td.hi{color:var(--hot); font-weight:600}
+.empty{color:var(--soft); font-family:var(--sans); font-size:14px; padding:14px 2px}
+
+.result{display:none; border-color:var(--live)}
+.result.show{display:block}
+.result h2{font-size:15px; font-weight:600; margin:0 0 10px}
+.rrow{display:flex; flex-wrap:wrap; gap:10px 26px; margin-bottom:10px}
+.rrow b{font-family:var(--mono); font-size:18px; font-weight:600; letter-spacing:.08em; color:var(--live)}
+.rrow span{display:block; font-size:12px; color:var(--soft)}
+.check{font-size:14px; color:var(--soft)}
+@media (prefers-reduced-motion: reduce){*{transition:none!important; animation:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Mạch XOR xoay vòng tính CRC</h1>
+<p class="sub">Bơm từng bit vào mạch và xem phần dư hình thành trong các ô thanh ghi. Đường phản hồi sáng lên đúng lúc mạch thực hiện phép trừ nhị phân với đa thức sinh.</p>
+
+<div class="panel">
+  <div class="setup">
+    <label class="field"><span>Đa thức sinh G(x)</span><input type="text" id="gin" value="1101" spellcheck="false" inputmode="numeric"></label>
+    <label class="field"><span>Chuỗi dữ liệu M</span><input type="text" id="min" value="1000101" spellcheck="false" inputmode="numeric"></label>
+    <button id="load">Nạp vào mạch</button>
+  </div>
+  <p class="err" id="err"></p>
+</div>
+
+<div class="panel">
+  <div class="ribbon" id="ribbon"></div>
+  <p class="legend" id="legend"></p>
+</div>
+
+<div class="panel">
+  <div class="scope"><svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg></div>
+  <div class="readout">
+    <div class="ro"><b id="roStep">0</b><span>bước đã bơm</span></div>
+    <div class="ro"><b id="roIn">–</b><span>bit sắp bơm</span></div>
+    <div class="ro" id="roFbWrap"><b id="roFb">0</b><span>feedback</span></div>
+    <div class="ro"><b id="roReg">000</b><span>thanh ghi (đọc R cao → R thấp)</span></div>
+  </div>
+  <p class="note" id="note"></p>
+</div>
+
+<div class="panel controls">
+  <button class="key" id="step">Bơm bit tiếp theo</button>
+  <button id="auto">Chạy tự động</button>
+  <button id="end">Chạy đến hết</button>
+  <button id="reset">Đặt lại</button>
+</div>
+
+<div class="panel">
+  <div class="log" id="log"></div>
+</div>
+
+<div class="panel result" id="result">
+  <h2>Kết quả</h2>
+  <div class="rrow">
+    <div><b id="rCrc">–</b><span>mã CRC</span></div>
+    <div><b id="rWord">–</b><span>chuỗi truyền đi (M ghép CRC)</span></div>
+  </div>
+  <p class="check" id="rCheck"></p>
+</div>
+
+</div>
+<script>
+(function(){
+  var SVGNS = "http://www.w3.org/2000/svg";
+  var CELL_W = 56, CELL_H = 46, CY = 128, BUS_Y = 58, GAP = 28, XOR_R = 15;
+
+  var svg = document.getElementById('svg');
+  var els = {};
+  var S = null;      // machine state
+  var timer = null;
+
+  function $(id){ return document.getElementById(id); }
+  function mk(tag, attrs){
+    var e = document.createElementNS(SVGNS, tag);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  // ---- core logic -------------------------------------------------------
+  function parse(gStr, mStr){
+    if (!/^[01]+$/.test(gStr)) return {error:'G(x) chỉ gồm các bit 0 và 1.'};
+    if (!/^[01]+$/.test(mStr)) return {error:'Chuỗi dữ liệu M chỉ gồm các bit 0 và 1.'};
+    if (gStr.length < 2) return {error:'G(x) cần ít nhất 2 bit, tức bậc r tối thiểu bằng 1.'};
+    if (gStr.length > 17) return {error:'Giới hạn G(x) tối đa 17 bit để mạch còn vẽ vừa màn hình.'};
+    if (gStr[0] !== '1') return {error:'Bit đầu của G(x) phải là 1, vì đó là hệ số của bậc cao nhất.'};
+    if (mStr.length > 64) return {error:'Giới hạn M tối đa 64 bit.'};
+    var r = gStr.length - 1;
+    var g = new Array(r + 1);
+    for (var k = 0; k < gStr.length; k++) g[r - k] = gStr[k] === '1' ? 1 : 0;
+    return {g:g, r:r, gStr:gStr, mStr:mStr,
+            stream:(mStr + new Array(r+1).join('0')).split('').map(Number)};
+  }
+
+  function poly(gStr){
+    var r = gStr.length - 1, t = [];
+    for (var k = 0; k < gStr.length; k++){
+      if (gStr[k] !== '1') continue;
+      var d = r - k;
+      t.push(d === 0 ? '1' : d === 1 ? 'x' : 'x^' + d);
+    }
+    return 'G(x) = ' + t.join(' + ');
+  }
+
+  function longDivision(gStr, mStr){
+    var r = gStr.length - 1;
+    var bits = (mStr + new Array(r+1).join('0')).split('').map(Number);
+    var gv = gStr.split('').map(Number);
+    for (var i = 0; i <= bits.length - gv.length; i++){
+      if (bits[i] === 1) for (var j = 0; j < gv.length; j++) bits[i+j] ^= gv[j];
+    }
+    return bits.slice(bits.length - r).join('');
+  }
+
+  function regString(){ return S.regs.slice().reverse().join(''); }
+
+  // ---- circuit drawing --------------------------------------------------
+  function draw(){
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    els = {gates:[], cells:[], vals:[]};
+
+    var r = S.r, g = S.g, x = 84, gates = [], cells = [];
+    for (var i = 0; i < r; i++){
+      if (g[i] === 1){ gates.push({i:i, x:x + XOR_R}); x += XOR_R*2 + GAP; }
+      cells.push({i:i, x:x}); x += CELL_W + GAP;
+    }
+    var tapX = cells[r-1].x + CELL_W;
+    var W = tapX + 96, H = 186;
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    svg.setAttribute('width', W);
+    svg.setAttribute('height', H);
+    svg.style.maxWidth = W + 'px';
+
+    var defs = mk('defs');
+    var mrk = mk('marker', {id:'ah', viewBox:'0 0 8 8', refX:'7', refY:'4',
+                            markerWidth:'6', markerHeight:'6', orient:'auto'});
+    mrk.appendChild(mk('path', {d:'M0,0 L8,4 L0,8 z', fill:'var(--copper)'}));
+    defs.appendChild(mrk);
+    svg.appendChild(defs);
+
+    // main data wire, drawn first so gates and cells mask it
+    svg.appendChild(mk('line', {x1:22, y1:CY, x2:tapX + 62, y2:CY,
+                                class:'wire', 'marker-end':'url(#ah)'}));
+    var lbl = mk('text', {x:22, y:CY - 14, class:'tag'});
+    lbl.textContent = 'dữ liệu vào';
+    svg.appendChild(lbl);
+    var out = mk('text', {x:tapX + 20, y:CY - 14, class:'tag'});
+    out.textContent = 'ra';
+    svg.appendChild(out);
+
+    // feedback bus
+    var minGx = gates.length ? gates[0].x : tapX;
+    var d = 'M' + (tapX + 34) + ' ' + CY + ' L' + (tapX + 34) + ' ' + BUS_Y + ' L' + minGx + ' ' + BUS_Y;
+    var fb = mk('path', {d:d, class:'fb'});
+    svg.appendChild(fb);
+    els.fb = [fb];
+    gates.forEach(function(gt){
+      var stub = mk('line', {x1:gt.x, y1:BUS_Y, x2:gt.x, y2:CY - XOR_R, class:'fb'});
+      svg.appendChild(stub);
+      els.fb.push(stub);
+    });
+    var fbl = mk('text', {x:minGx + 6, y:BUS_Y - 9, class:'tag'});
+    fbl.textContent = 'đường phản hồi';
+    svg.appendChild(fbl);
+    els.fbLabel = fbl;
+
+    // xor gates
+    gates.forEach(function(gt){
+      var c = mk('circle', {cx:gt.x, cy:CY, r:XOR_R, class:'gate'});
+      var t = mk('text', {x:gt.x, y:CY + 6, class:'gsym'});
+      t.textContent = '\u2295';
+      svg.appendChild(c); svg.appendChild(t);
+      els.gates.push({c:c, t:t});
+    });
+
+    // register cells
+    cells.forEach(function(cl){
+      var rect = mk('rect', {x:cl.x, y:CY - CELL_H/2, width:CELL_W, height:CELL_H,
+                             rx:6, class:'cell'});
+      var val = mk('text', {x:cl.x + CELL_W/2, y:CY + 7, class:'cval'});
+      val.textContent = '0';
+      var name = mk('text', {x:cl.x + CELL_W/2, y:CY + CELL_H/2 + 17, class:'clab'});
+      name.textContent = 'R' + cl.i;
+      svg.appendChild(rect); svg.appendChild(val); svg.appendChild(name);
+      els.cells.push(rect); els.vals.push(val);
+    });
+  }
+
+  // ---- rendering --------------------------------------------------------
+  function render(){
+    var r = S.r, done = S.pos >= S.stream.length;
+    var fbv = S.regs[r-1];
+
+    for (var i = 0; i < r; i++){
+      var on = S.regs[i] === 1;
+      els.cells[i].classList.toggle('one', on);
+      els.vals[i].textContent = S.regs[i];
+      els.vals[i].classList.toggle('one', on);
+    }
+    var hot = fbv === 1 && !done;
+    els.fb.forEach(function(p){ p.classList.toggle('on', hot); });
+    els.fbLabel.classList.toggle('on', hot);
+    els.gates.forEach(function(gt){
+      gt.c.classList.toggle('on', hot);
+      gt.t.classList.toggle('on', hot);
+    });
+
+    $('roStep').textContent = S.pos;
+    $('roIn').textContent = done ? '–' : S.stream[S.pos];
+    $('roFb').textContent = fbv;
+    $('roFbWrap').classList.toggle('fbon', hot);
+    $('roReg').textContent = regString();
+
+    var note = $('note');
+    if (done){
+      note.innerHTML = '<strong>Đã bơm hết chuỗi.</strong> Giá trị còn đọng lại trong thanh ghi chính là mã CRC.';
+    } else if (fbv === 1){
+      note.innerHTML = '<strong>Feedback = 1 nên cổng XOR kích hoạt.</strong> Mạch vừa gom đủ bit để trừ một lần với G(x), đúng như bước hạ bit rồi đặt số chia khi chia tay.';
+    } else {
+      note.innerHTML = '<strong>Feedback = 0 nên cổng XOR nghỉ.</strong> Vì 0 &#8853; A = A, bit chạy thẳng qua các ô mà không đổi giá trị.';
+    }
+
+    // input ribbon
+    var rib = $('ribbon'); rib.innerHTML = '';
+    S.stream.forEach(function(b, idx){
+      var e = document.createElement('div');
+      e.className = 'bit' + (idx >= S.mStr.length ? ' pad' : '')
+                  + (idx < S.pos ? ' done' : '') + (idx === S.pos ? ' now' : '');
+      e.textContent = b;
+      rib.appendChild(e);
+    });
+    $('legend').textContent = poly(S.gStr) + ' · bậc r = ' + r
+      + ' nên mạch có ' + r + ' ô thanh ghi và chuỗi M được nhồi thêm ' + r + ' bit 0 ở cuối (viền đứt).';
+
+    // step log
+    var log = $('log');
+    if (!S.rows.length){
+      log.innerHTML = '<p class="empty">Chưa bơm bit nào. Bấm “Bơm bit tiếp theo” hoặc dùng phím mũi tên phải.</p>';
+    } else {
+      var head = '<tr><th style="text-align:left">Bước</th><th>Bit vào</th><th>Feedback</th><th>Thanh ghi</th></tr>';
+      var body = S.rows.map(function(rw){
+        return '<tr><td style="text-align:left">' + rw.step + '</td><td>' + rw.inBit
+             + '</td><td class="' + (rw.fb ? 'hi' : '') + '">' + rw.fb
+             + '</td><td>' + rw.state + '</td></tr>';
+      }).join('');
+      log.innerHTML = '<table><thead>' + head + '</thead><tbody>' + body + '</tbody></table>';
+      log.scrollTop = log.scrollHeight;
+    }
+
+    // result
+    var res = $('result');
+    if (done){
+      var crc = regString();
+      $('rCrc').textContent = crc;
+      $('rWord').textContent = S.mStr + crc;
+      var ref = longDivision(S.gStr, S.mStr);
+      $('rCheck').textContent = ref === crc
+        ? 'Đối chiếu phép chia dư đa thức modulo 2 bằng tay: phần dư cũng là ' + ref + '. Hai cách cho cùng một kết quả, vì mạch chính là cài đặt phần cứng của phép chia đó.'
+        : 'Đối chiếu phép chia dư cho ra ' + ref + '.';
+      res.classList.add('show');
+    } else {
+      res.classList.remove('show');
+    }
+
+    $('step').disabled = done;
+    $('end').disabled = done;
+    $('auto').disabled = done && !timer;
+    $('auto').textContent = timer ? 'Tạm dừng' : 'Chạy tự động';
+  }
+
+  // ---- machine ----------------------------------------------------------
+  function load(gStr, mStr){
+    var p = parse(gStr, mStr);
+    $('err').textContent = p.error || '';
+    if (p.error) return false;
+    stopAuto();
+    S = {g:p.g, r:p.r, gStr:p.gStr, mStr:p.mStr, stream:p.stream,
+         regs:new Array(p.r).fill(0), pos:0, rows:[]};
+    draw();
+    render();
+    return true;
+  }
+
+  function step(){
+    if (!S || S.pos >= S.stream.length) return false;
+    var r = S.r, g = S.g, inBit = S.stream[S.pos], fb = S.regs[r-1];
+    var nx = new Array(r);
+    for (var i = r - 1; i >= 1; i--) nx[i] = S.regs[i-1] ^ (g[i] & fb);
+    nx[0] = inBit ^ (g[0] & fb);
+    S.regs = nx;
+    S.pos++;
+    S.rows.push({step:S.pos, inBit:inBit, fb:fb, state:regString()});
+    return true;
+  }
+
+  function stopAuto(){ if (timer){ clearInterval(timer); timer = null; } }
+
+  $('load').addEventListener('click', function(){
+    load($('gin').value.trim(), $('min').value.trim());
+  });
+  $('step').addEventListener('click', function(){ stopAuto(); step(); render(); });
+  $('reset').addEventListener('click', function(){
+    stopAuto(); S.regs = new Array(S.r).fill(0); S.pos = 0; S.rows = []; render();
+  });
+  $('end').addEventListener('click', function(){
+    stopAuto(); while (step()){} render();
+  });
+  $('auto').addEventListener('click', function(){
+    if (timer){ stopAuto(); render(); return; }
+    if (S.pos >= S.stream.length){ S.regs = new Array(S.r).fill(0); S.pos = 0; S.rows = []; }
+    timer = setInterval(function(){
+      if (!step()){ stopAuto(); }
+      render();
+    }, 620);
+    render();
+  });
+  document.addEventListener('keydown', function(e){
+    if (e.target.tagName === 'INPUT') return;
+    if (e.key === 'ArrowRight'){ e.preventDefault(); stopAuto(); step(); render(); }
+  });
+
+  load('1101', '1000101');
+})();
+</script>
+</body>
+</html>
